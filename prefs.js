@@ -35,38 +35,6 @@ const RunningIndicatorStyle = {
     METRO: 7
 };
 
-/**
- * This function was copied from the activities-config extension
- * https://github.com/nls1729/acme-code/tree/master/activities-config
- * by Norman L. Smith.
- */
-function cssHexString(css) {
-    let rrggbb = '#';
-    let start;
-    for (let loop = 0; loop < 3; loop++) {
-        let end = 0;
-        let xx = '';
-        for (let loop = 0; loop < 2; loop++) {
-            while (true) {
-                let x = css.slice(end, end + 1);
-                if ((x == '(') || (x == ',') || (x == ')'))
-                    break;
-                end++;
-            }
-            if (loop == 0) {
-                end++;
-                start = end;
-            }
-        }
-        xx = parseInt(css.slice(start, end)).toString(16);
-        if (xx.length == 1)
-            xx = '0' + xx;
-        rrggbb += xx;
-        css = css.slice(end);
-    }
-    return rrggbb;
-}
-
 // TODO:
 // function setShortcut(settings) {
 //     let shortcut_text = settings.get_string('shortcut-text');
@@ -80,7 +48,6 @@ function cssHexString(css) {
 //         settings.set_strv('shortcut', []);
 //     }
 // }
-
 
 var Settings = GObject.registerClass({
     Implements: [Gtk.BuilderScope],
@@ -101,13 +68,6 @@ var Settings = GObject.registerClass({
         this.widget = new Gtk.ScrolledWindow({ hscrollbar_policy: Gtk.PolicyType.NEVER });
         this._notebook = this._builder.get_object('settings_notebook');
         this.widget.set_child(this._notebook);
-
-        // Set a reasonable initial window height
-        this.widget.connect('realize', () => {
-            let window = this.widget.get_root();
-            let [default_width, default_height] = window.get_default_size();
-            window.resize(default_width, 650);
-        });
 
         // Timeout to delay the update of the settings
         this._dock_size_timeout = 0;
@@ -707,21 +667,19 @@ var Settings = GObject.registerClass({
             rgba.parse(this._settings.get_string('custom-theme-running-dots-color'));
             this._builder.get_object('dot_color_colorbutton').set_rgba(rgba);
 
-            this._builder.get_object('dot_color_colorbutton').connect('notify::color', (button) => {
-                let rgba = button.get_rgba();
-                let css = rgba.to_string();
-                let hexString = cssHexString(css);
-                this._settings.set_string('custom-theme-running-dots-color', hexString);
+            this._builder.get_object('dot_color_colorbutton').connect('notify::rgba', (button) => {
+                let css = button.rgba.to_string();
+
+                this._settings.set_string('custom-theme-running-dots-color', css);
             });
 
             rgba.parse(this._settings.get_string('custom-theme-running-dots-border-color'));
             this._builder.get_object('dot_border_color_colorbutton').set_rgba(rgba);
 
-            this._builder.get_object('dot_border_color_colorbutton').connect('notify::color', (button) => {
-                let rgba = button.get_rgba();
-                let css = rgba.to_string();
-                let hexString = cssHexString(css);
-                this._settings.set_string('custom-theme-running-dots-border-color', hexString);
+            this._builder.get_object('dot_border_color_colorbutton').connect('notify::rgba', (button) => {
+                let css = button.rgba.to_string();
+
+                this._settings.set_string('custom-theme-running-dots-border-color', css);
             });
 
             this._settings.bind('custom-theme-running-dots-border-width',
@@ -748,11 +706,10 @@ var Settings = GObject.registerClass({
         rgba.parse(this._settings.get_string('background-color'));
         this._builder.get_object('custom_background_color').set_rgba(rgba);
 
-        this._builder.get_object('custom_background_color').connect('notify::color', (button) => {
-            let rgba = button.get_rgba();
-            let css = rgba.to_string();
-            let hexString = cssHexString(css);
-            this._settings.set_string('background-color', hexString);
+        this._builder.get_object('custom_background_color').connect('notify::rgba', (button) => {
+            let css = button.rgba.to_string();
+
+            this._settings.set_string('background-color', css);
         });
 
         // Opacity
