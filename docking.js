@@ -46,33 +46,33 @@ const scrollAction = {
 
 /**
  * Ported from GNOME Shell 3.38
- * 
+ *
  * In GNOME Shell 40+ the dash is always visible,
- * we need to re-include a spacer because our dash 
+ * we need to re-include a spacer because our dash
  * is not always visible.
  */
 var DashSpacer = GObject.registerClass(
     class DashSpacer extends Clutter.Actor {
         _init(source) {
             super._init();
-    
+
             this._bindConstraint = new Clutter.BindConstraint({
                 source,
                 coordinate: Clutter.BindCoordinate.SIZE,
             });
             this.add_constraint(this._bindConstraint);
         }
-        
+
         setMaxSize(size) {
             // Handles overview controls trying to set the dash' max size.
         }
-    
+
         vfunc_get_preferred_width(forHeight) {
             if (this._bindConstraint)
                 return this._bindConstraint.source.get_preferred_width(forHeight);
             return super.vfunc_get_preferred_width(forHeight);
         }
-    
+
         vfunc_get_preferred_height(forWidth) {
             if (this._bindConstraint)
                 return this._bindConstraint.source.get_preferred_height(forWidth);
@@ -80,7 +80,6 @@ var DashSpacer = GObject.registerClass(
         }
     }
 );
-    
 
 /**
  * A simple St.Widget with one child whose allocation takes into account the
@@ -416,7 +415,6 @@ var DockedDash = GObject.registerClass({
     _untrackDock() {
         Main.layoutManager._untrackActor(this);
         Main.layoutManager._untrackActor(this._slider);
-        
     }
 
     _trackDock() {
@@ -1765,7 +1763,9 @@ var DockManager = class DashToDock_DockManager {
         overviewControls._searchController._showAppsButton = this.mainDock.dash.showAppsButton;
 
         if (this.mainDock.dash._isHorizontal) {
-            overviewControls._dashSpacer = this.mainDock._dashSpacer;
+            // In the horizontal case we replace the default dock with an actor
+            // bound to our dash size so that it will be taken in account when
+            // allocating the ControlsManagerLayout
             Main.overview._overview._controls.add_child(this.mainDock._dashSpacer);
             Main.overview._overview._controls.layout_manager._dash = this.mainDock._dashSpacer;
         }
