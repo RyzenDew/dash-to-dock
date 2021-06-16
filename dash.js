@@ -729,9 +729,7 @@ var MyDash = GObject.registerClass({
             if (!this._removables) {
                 this._removables = new Locations.Removables();
                 this._signalsHandler.addWithLabel('show-mounts',
-                    [ this._removables,
-                      'changed',
-                      this._queueRedisplay.bind(this) ]);
+                    this._removables, 'changed', this._queueRedisplay.bind(this));
             }
             Array.prototype.push.apply(newApps, this._removables.getApps());
         } else if (this._removables) {
@@ -743,10 +741,8 @@ var MyDash = GObject.registerClass({
         if (settings.get_boolean('show-trash')) {
             if (!this._trash) {
                 this._trash = new Locations.Trash();
-                this._signalsHandler.addWithLabel('show-trash',
-                    [ this._trash,
-                      'changed',
-                      this._queueRedisplay.bind(this) ]);
+                this._signalsHandler.addWithLabel('show-trash', this._trash,
+                    'changed', this._queueRedisplay.bind(this));
             }
             newApps.push(this._trash.getApp());
         } else if (this._trash) {
