@@ -1551,6 +1551,7 @@ var DockManager = class DashToDock_DockManager {
         this._oldDash = Main.overview.isDummy ? null : Main.overview.dash;
 
         this._ensureFileManagerClient();
+        this._propertyInjections = new Utils.PropertyInjectionsHandler();
 
         /* Array of all the docks created */
         this._allDocks = [];
@@ -1715,9 +1716,10 @@ var DockManager = class DashToDock_DockManager {
         // while just use the default getter otherwise.
         // The getter must be dynamic and not set only when we've a dummy
         // overview because the mode can change dynamically.
+        this._propertyInjections.removeWithLabel('main-dash');
         let defaultDashGetter = Object.getOwnPropertyDescriptor(
             Main.overview.constructor.prototype, 'dash').get;
-        Object.defineProperty(Main.overview, 'dash', {
+        this._propertyInjections.addWithLabel('main-dash', Main.overview, 'dash', {
             configurable: true,
             get: () => Main.overview.isDummy ?
                 this.mainDock.dash : defaultDashGetter.call(Main.overview),
@@ -1778,9 +1780,7 @@ var DockManager = class DashToDock_DockManager {
     }
 
     _restoreDash() {
-        Object.defineProperty(Main.overview, 'dash',
-            Object.getOwnPropertyDescriptor(
-                Main.overview.constructor.prototype, 'dash'));
+        this._propertyInjections.removeWithLabel('main-dash');
 
         if (!this._oldDash)
                 return;
@@ -1834,6 +1834,7 @@ var DockManager = class DashToDock_DockManager {
 
     destroy() {
         this._signalsHandler.destroy();
+        this._propertyInjections.destroy();
         if (this._toggleLater) {
             Meta.later_remove(this._toggleLater);
             delete this._toggleLater;
