@@ -45,43 +45,6 @@ const scrollAction = {
 };
 
 /**
- * Ported from GNOME Shell 3.38
- *
- * In GNOME Shell 40+ the dash is always visible,
- * we need to re-include a spacer because our dash
- * is not always visible.
- */
-var DashSpacer = GObject.registerClass(
-    class DashSpacer extends Clutter.Actor {
-        _init(source) {
-            super._init();
-
-            this._bindConstraint = new Clutter.BindConstraint({
-                source,
-                coordinate: Clutter.BindCoordinate.SIZE,
-            });
-            this.add_constraint(this._bindConstraint);
-        }
-
-        setMaxSize(size) {
-            // Handles overview controls trying to set the dash' max size.
-        }
-
-        vfunc_get_preferred_width(forHeight) {
-            if (this._bindConstraint)
-                return this._bindConstraint.source.get_preferred_width(forHeight);
-            return super.vfunc_get_preferred_width(forHeight);
-        }
-
-        vfunc_get_preferred_height(forWidth) {
-            if (this._bindConstraint)
-                return this._bindConstraint.source.get_preferred_height(forWidth);
-            return super.vfunc_get_preferred_height(forWidth);
-        }
-    }
-);
-
-/**
  * A simple St.Widget with one child whose allocation takes into account the
  * slide out of its child via the _slidex parameter ([0:1]).
  *
@@ -367,9 +330,6 @@ var DockedDash = GObject.registerClass({
 
         this._paintId = global.stage.connect('after-paint', this._initialize.bind(this));
 
-        // Reserve space for the dash in the overview.
-        this._dashSpacer = new DashSpacer(this._box);
-
         // Add dash container actor and the container to the Chrome.
         this.set_child(this._slider);
         this._slider.set_child(this._box);
@@ -409,6 +369,10 @@ var DockedDash = GObject.registerClass({
         this._resetPosition();
 
         this.connect('destroy', this._onDestroy.bind(this));
+    }
+
+    get isHorizontal() {
+        return this._isHorizontal;
     }
 
     _untrackDock() {
@@ -1551,6 +1515,7 @@ var DockManager = class DashToDock_DockManager {
         this._oldDash = Main.overview.isDummy ? null : Main.overview.dash;
 
         this._ensureFileManagerClient();
+        this._methodInjections = new Utils.InjectionsHandler();
         this._propertyInjections = new Utils.PropertyInjectionsHandler();
 
         /* Array of all the docks created */
@@ -1740,6 +1705,16 @@ var DockManager = class DashToDock_DockManager {
         // actors has this effect, i.e in horizontal mode and without the workspaceThumnails
         // 1 static workspace only)
         this._oldDash.set_height(1);
+        // We also need to ignore max-size changes
+        this._methodInjections.addWithLabel('main-dash', this._oldDash,
+            'setMaxSize', () => {});
+        // And to return the preferred height depending on the state
+        this._methodInjections.addWithLabel('main-dash', this._oldDash,
+            'get_preferred_height', (_originalMethod, ...args) => {
+                if (this.mainDock.isHorizontal)
+                    return this.mainDock.get_preferred_height(...args);
+                return [0, 0];
+            });
 
         this._signalsHandler.addWithLabel('old-dash-changes', [
             this._oldDash,
@@ -1757,13 +1732,25 @@ var DockManager = class DashToDock_DockManager {
         overviewControls.dash = this.mainDock.dash;
         overviewControls._searchController._showAppsButton = this.mainDock.dash.showAppsButton;
 
-        if (this.mainDock.dash._isHorizontal) {
-            // In the horizontal case we replace the default dock with an actor
-            // bound to our dash size so that it will be taken in account when
-            // allocating the ControlsManagerLayout
-            Main.overview._overview._controls.add_child(this.mainDock._dashSpacer);
-            Main.overview._overview._controls.layout_manager._dash = this.mainDock._dashSpacer;
-        }
+        const { ControlsManagerLayout } = OverviewControls;
+        this._methodInjections.addWithLabel('main-dash',
+            ControlsManagerLayout.prototype,
+            '_computeWorkspacesBoxForState',
+            function (originalFunction, state, box, ...args) {
+                const [, height] = box.get_size();
+                const { mainDock } = DockManager.getDefault();
+                if (mainDock.isHorizontal) {
+                    return originalFunction.call(this, state, box, ...args);
+                } else {
+                    const [, dashWidth] = mainDock.get_preferred_width(height);
+                    const workspaceBox = originalFunction.call(this, state, box, ...args);
+                    const [x, y] = workspaceBox.get_origin();
+                    const [workspaceWidth, workspaceHeight] = workspaceBox.get_size();
+                    workspaceBox.set_origin(x + dashWidth, y);
+                    workspaceBox.set_size(workspaceWidth - dashWidth, workspaceHeight);
+                    return workspaceBox;
+                }
+            });
     }
 
     _deleteDocks() {
@@ -1781,6 +1768,7 @@ var DockManager = class DashToDock_DockManager {
 
     _restoreDash() {
         this._propertyInjections.removeWithLabel('main-dash');
+        this._methodInjections.removeWithLabel('main-dash');
 
         if (!this._oldDash)
                 return;
@@ -1789,9 +1777,6 @@ var DockManager = class DashToDock_DockManager {
 
         let overviewControls = Main.overview._overview._controls;
         Main.overview._overview._controls.layout_manager._dash = this._oldDash;
-        if (this.mainDock._dashSpacer) {
-            Main.overview._overview._controls.remove_child(this.mainDock._dashSpacer);
-        }
 
         overviewControls.dash = this._oldDash;
         overviewControls._searchController._showAppsButton = this._oldDash.showAppsButton;
@@ -1835,6 +1820,7 @@ var DockManager = class DashToDock_DockManager {
     destroy() {
         this._signalsHandler.destroy();
         this._propertyInjections.destroy();
+        this._methodInjections.destroy();
         if (this._toggleLater) {
             Meta.later_remove(this._toggleLater);
             delete this._toggleLater;

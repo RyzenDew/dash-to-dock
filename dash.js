@@ -976,7 +976,7 @@ var MyDash = GObject.registerClass({
             this.showAppsButton.set_height(0)
         }
     }
-    
+
     setMaxSize(maxWidth, maxHeight) {
         if (this._maxWidth === maxWidth &&
             this._maxHeight === maxHeight)
