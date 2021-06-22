@@ -1754,9 +1754,8 @@ var DockManager = class DashToDock_DockManager {
 
         // Pretend I'm the dash: meant to make appgrid swarm animation come from
         // the right position of the appShowButton.
-        let overviewControls = Main.overview._overview._controls;
-        overviewControls.dash = this.mainDock.dash;
-        overviewControls._searchController._showAppsButton = this.mainDock.dash.showAppsButton;
+        this.overviewControls.dash = this.mainDock.dash;
+        this.searchController._showAppsButton = this.mainDock.dash.showAppsButton;
 
         // We also need to ignore max-size changes
         this._methodInjections.addWithLabel('main-dash', this._oldDash,
@@ -1964,23 +1963,26 @@ var DockManager = class DashToDock_DockManager {
         this._methodInjections.removeWithLabel('main-dash');
         this._vfuncInjections.removeWithLabel('main-dash');
 
-        let overviewControls = Main.overview._overview._controls;
-        Main.overview._overview._controls.layout_manager._dash = this._oldDash;
-        overviewControls.dash = this._oldDash;
-        overviewControls._searchController._showAppsButton = this._oldDash.showAppsButton;
+        this.overviewControls.layout_manager._dash = this._oldDash;
+        this.overviewControls.dash = this._oldDash;
+        this.searchController._showAppsButton = this._oldDash.showAppsButton;
         Main.overview.dash.show();
         Main.overview.dash.set_height(-1); // reset default dash size
         // This force the recalculation of the icon size
         Main.overview.dash._maxHeight = -1;
     }
 
+    get overviewControls() {
+        return Main.overview._overview.controls;
+    }
+
     get searchController() {
-        return Main.overview._overview.controls._searchController;
+        return this.overviewControls._searchController;
     }
 
     _onShowAppsButtonToggled(button) {
         const { checked } = button;
-        const overviewControls = Main.overview._overview.controls;
+        const { overviewControls } = this;
 
         if (!Main.overview.visible) {
             this.mainDock.dash.showAppsButton._fromDesktop = true;
@@ -2042,7 +2044,7 @@ var DockManager = class DashToDock_DockManager {
         this._deleteDocks();
         this._revertPanelCorners();
         if (this._oldSelectorMargin)
-            Main.overview._overview.controls._searchController.margin_bottom = this._oldSelectorMargin;
+            this.searchController.margin_bottom = this._oldSelectorMargin;
         if (this._fm1Client) {
             this._fm1Client.destroy();
             this._fm1Client = null;
