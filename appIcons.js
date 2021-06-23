@@ -233,7 +233,7 @@ var MyAppIcon = GObject.registerClass({
             break;
         }
 
-        if (!Main.overview._shown) {
+        if (!Main.overview.visible) {
             let reversed = direction === Meta.MotionDirection.UP;
             if (this.focused)
                 this._cycleThroughWindows(reversed);
@@ -426,7 +426,7 @@ var MyAppIcon = GObject.registerClass({
             case clickAction.MINIMIZE:
                 // In overview just activate the app, unless the acion is explicitely
                 // requested with a keyboard modifier
-                if (!Main.overview._shown || modifiers){
+                if (!Main.overview.visible || modifiers){
                     // If we have button=2 or a modifier, allow minimization even if
                     // the app is not focused
                     if (this.focused || button === 2 || modifiers & Clutter.ModifierType.SHIFT_MASK) {
@@ -469,7 +469,7 @@ var MyAppIcon = GObject.registerClass({
                 break;
 
             case clickAction.CYCLE_WINDOWS:
-                if (!Main.overview._shown){
+                if (!Main.overview.visible) {
                     if (this.focused)
                         this._cycleThroughWindows();
                     else {
@@ -511,7 +511,7 @@ var MyAppIcon = GObject.registerClass({
                 break;
 
             case clickAction.PREVIEWS:
-                if (!Main.overview._shown) {
+                if (!Main.overview.visible) {
                     // If only one windows is present just switch to it, but only when trigggered with the
                     // simple click action (no modifiers, no middle click).
                     if (windows.length == 1 && !modifiers && button == 1) {
@@ -529,7 +529,7 @@ var MyAppIcon = GObject.registerClass({
                 // When a single window is present, toggle minimization
                 // If only one windows is present toggle minimization, but only when trigggered with the
                 // simple click action (no modifiers, no middle click).
-                if (!Main.overview._shown){
+                if (!Main.overview.visible) {
                     if (windows.length == 1 && !modifiers && button == 1) {
                         let w = windows[0];
                         if (this.focused) {
