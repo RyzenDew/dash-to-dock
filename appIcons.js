@@ -29,6 +29,7 @@ const Workspace = imports.ui.workspace;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
 const Docking = Me.imports.docking;
+const Locations = Me.imports.locations;
 const Utils = Me.imports.utils;
 const WindowPreview = Me.imports.windowPreview;
 const AppIconIndicators = Me.imports.appIconIndicators;
@@ -196,6 +197,14 @@ var MyAppIcon = GObject.registerClass({
         // It can be safely removed once it get solved upstrea.
         if (this._menu)
             this._menu.close(false);
+    }
+
+    get location() {
+        return this._location;
+    }
+
+    get isTrash() {
+        return this._location?.startsWith(Locations.TRASH_URI);
     }
 
     _onWindowEntered(metaScreen, monitorIndex, metaWin) {

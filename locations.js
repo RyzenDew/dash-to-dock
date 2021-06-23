@@ -16,6 +16,7 @@ const Me = imports.misc.extensionUtils.getCurrentExtension();
 const Docking = Me.imports.docking;
 const Utils = Me.imports.utils;
 
+var TRASH_URI = 'trash://';
 const UPDATE_TRASH_DELAY = 500;
 
 /**
@@ -31,7 +32,7 @@ var Trash = class DashToDock_Trash {
 
         Gio._promisify(Gio.FileEnumerator.prototype, 'close_async', 'close_finish');
         Gio._promisify(Gio.FileEnumerator.prototype, 'next_files_async', 'next_files_finish');
-        Gio._promisify(Gio.file_new_for_uri('trash://').constructor.prototype,
+        Gio._promisify(Gio.file_new_for_uri(TRASH_URI).constructor.prototype,
             'enumerate_children_async', 'enumerate_children_finish');
         Trash._promisified = true;
     }
@@ -39,7 +40,7 @@ var Trash = class DashToDock_Trash {
     constructor() {
         Trash.initPromises();
         this._cancellable = new Gio.Cancellable();
-        this._file = Gio.file_new_for_uri('trash://');
+        this._file = Gio.file_new_for_uri(TRASH_URI);
         try {
             this._monitor = this._file.monitor_directory(0, this._cancellable);
             this._signalId = this._monitor.connect(
@@ -100,9 +101,9 @@ var Trash = class DashToDock_Trash {
             trashKeys.set_string('Desktop Entry', 'Icon',
                                  this._empty ? 'user-trash' : 'user-trash-full');
             trashKeys.set_string('Desktop Entry', 'Type', 'Application');
-            trashKeys.set_string('Desktop Entry', 'Exec', 'gio open trash:///');
+            trashKeys.set_string('Desktop Entry', 'Exec', `gio open ${TRASH_URI}`);
             trashKeys.set_string('Desktop Entry', 'StartupNotify', 'false');
-            trashKeys.set_string('Desktop Entry', 'XdtdUri', 'trash:///');
+            trashKeys.set_string('Desktop Entry', 'XdtdUri', `${TRASH_URI}/`);
             if (!this._empty) {
                 trashKeys.set_string('Desktop Entry', 'Actions', 'empty-trash;');
                 trashKeys.set_string('Desktop Action empty-trash', 'Name', __('Empty Trash'));
