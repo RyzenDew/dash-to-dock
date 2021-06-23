@@ -28,6 +28,7 @@ const Utils = Me.imports.utils;
 const Intellihide = Me.imports.intellihide;
 const Theming = Me.imports.theming;
 const MyDash = Me.imports.dash;
+const Locations = Me.imports.locations;
 const LauncherAPI = Me.imports.launcherAPI;
 const FileManager1API = Me.imports.fileManager1API;
 
@@ -1547,7 +1548,7 @@ var DockManager = class DashToDock_DockManager {
         this._settings = ExtensionUtils.getSettings('org.gnome.shell.extensions.dash-to-dock');
         this._oldDash = Main.overview.isDummy ? null : Main.overview.dash;
 
-        this._ensureFileManagerClient();
+        this._ensureLocations();
 
         /* Array of all the docks created */
         this._allDocks = [];
@@ -1570,7 +1571,11 @@ var DockManager = class DashToDock_DockManager {
     }
 
     static get settings() {
-        return DockManager.getDefault()._settings;
+        return DockManager.getDefault().settings;
+    }
+
+    get settings() {
+        return this._settings;
     }
 
     get fm1Client() {
@@ -1581,21 +1586,42 @@ var DockManager = class DashToDock_DockManager {
         return this._allDocks.length ? this._allDocks[0] : null;
     }
 
+    get removables() {
+        return this._removables;
+    }
+
+    get trash() {
+        return this._trash;
+    }
+
     getDockByMonitor(monitorIndex) {
         return this._allDocks.find(d => (d.monitorIndex === monitorIndex));
     }
 
-    _ensureFileManagerClient() {
-        let supportsLocations = ['show-trash', 'show-mounts'].some((s) => {
-            return this._settings.get_boolean(s);
-        });
+    _ensureLocations() {
+        const showTrash = this._settings.get_boolean('show-trash');
+        const showMounts = this._settings.get_boolean('show-mounts');
 
-        if (supportsLocations) {
+        if (showTrash || showMounts) {
             if (!this._fm1Client)
                 this._fm1Client = new FileManager1API.FileManager1Client();
         } else if (this._fm1Client) {
             this._fm1Client.destroy();
             this._fm1Client = null;
+        }
+
+        if (showMounts && !this._removables) {
+            this._removables = new Locations.Removables();
+        } else if (!showMounts && this._removables) {
+            this._removables.destroy();
+            this._removables = null;
+        }
+
+        if (showTrash && !this._trash) {
+            this._trash = new Locations.Trash();
+        } else if (!showTrash && this._trash) {
+            this._trash.destroy();
+            this._trash = null;
         }
     }
 
@@ -1645,11 +1671,11 @@ var DockManager = class DashToDock_DockManager {
         ], [
             this._settings,
             'changed::show-trash',
-            () => this._ensureFileManagerClient()
+            () => this._ensureLocations()
         ], [
             this._settings,
             'changed::show-mounts',
-            () => this._ensureFileManagerClient()
+            () => this._ensureLocations()
         ]);
     }
 
