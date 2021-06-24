@@ -324,6 +324,9 @@ var DockedDash = GObject.registerClass({
         this._signalsHandler.add(this._themeManager, 'updated',
             () => this.dash.resetAppIcons());
 
+        this._signalsHandler.add(DockManager.iconTheme, 'changed',
+            () => this.dash.resetAppIcons());
+
         // Since the actor is not a topLevel child and its parent is now not added to the Chrome,
         // the allocation change of the parent container (slide in and slideout) doesn't trigger
         // anymore an update of the input regions. Force the update manually.
@@ -1540,6 +1543,7 @@ var DockManager = class DashToDock_DockManager {
 
         Me.imports.extension.dockManager = this;
 
+        this._iconTheme = new Utils.IconTheme();
         this._remoteModel = new LauncherAPI.LauncherEntryRemoteModel();
         this._signalsHandler = new Utils.GlobalSignalsHandler(this);
         this._methodInjections = new Utils.InjectionsHandler(this);
@@ -1574,8 +1578,16 @@ var DockManager = class DashToDock_DockManager {
         return DockManager.getDefault().settings;
     }
 
+    static get iconTheme() {
+        return DockManager.getDefault().iconTheme;
+    }
+
     get settings() {
         return this._settings;
+    }
+
+    get iconTheme() {
+        return this._iconTheme.iconTheme;
     }
 
     get fm1Client() {
@@ -2075,6 +2087,7 @@ var DockManager = class DashToDock_DockManager {
             this._fm1Client.destroy();
             this._fm1Client = null;
         }
+        this._iconTheme.destroy();
         this._remoteModel.destroy();
         this._settings.run_dispose();
         this._settings = null;
