@@ -95,13 +95,12 @@ var MyAppIcon = GObject.registerClass({
     }
 }, class MyAppIcon extends Dash.DashIcon {
     // settings are required inside.
-    _init(remoteModel, app, monitorIndex, iconAnimator) {
+    _init(app, monitorIndex, iconAnimator) {
         super._init(app);
 
         // a prefix is required to avoid conflicting with the parent class variable
         this.monitorIndex = monitorIndex;
         this._signalsHandler = new Utils.GlobalSignalsHandler(this);
-        this.remoteModel = remoteModel;
         this.iconAnimator = iconAnimator;
         this._indicator = new AppIconIndicators.AppIconIndicator(this);
 
@@ -395,7 +394,7 @@ var MyAppIcon = GObject.registerClass({
         this._draggable.fakeRelease();
 
         if (!this._menu) {
-            this._menu = new MyAppIconMenu(this, this.remoteModel);
+            this._menu = new MyAppIconMenu(this);
             this._menu.connect('activate-window', (menu, window) => {
                 this.activateWindow(window);
             });
@@ -884,7 +883,7 @@ var MyAppIcon = GObject.registerClass({
  */
 const MyAppIconMenu = class DashToDock_MyAppIconMenu extends AppDisplay.AppIconMenu {
 
-    constructor(source, remoteModel) {
+    constructor(source) {
         let side = Utils.getPosition();
 
         // Damm it, there has to be a proper way of doing this...
@@ -899,7 +898,9 @@ const MyAppIconMenu = class DashToDock_MyAppIconMenu extends AppDisplay.AppIconM
 
         this._signalsHandler = new Utils.GlobalSignalsHandler(this);
 
-        if (remoteModel && DbusmenuUtils.haveDBusMenu()) {
+        const { remoteModel } = Docking.DockManager.getDefault();
+        const remoteModelApp = remoteModel?.lookupById(this._source?.app?.id);
+        if (remoteModelApp && DbusmenuUtils.haveDBusMenu()) {
             const [onQuicklist, onDynamicSection] = Utils.splitHandler((sender, { quicklist }, dynamicSection) => {
                 dynamicSection.removeAll();
                 if (quicklist) {
@@ -909,7 +910,7 @@ const MyAppIconMenu = class DashToDock_MyAppIconMenu extends AppDisplay.AppIconM
             });
 
             this._signalsHandler.add([
-                remoteModel.lookupById(this._source.app.id),
+                remoteModelApp,
                 'quicklist-changed',
                 onQuicklist
             ], [
