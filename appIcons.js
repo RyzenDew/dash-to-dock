@@ -380,7 +380,7 @@ var DockAbstractAppIcon = GObject.registerClass({
         this._draggable.fakeRelease();
 
         if (!this._menu) {
-            this._menu = new MyAppIconMenu(this);
+            this._menu = new DockAppIconMenu(this);
             this._menu.connect('activate-window', (menu, window) => {
                 this.activateWindow(window);
             });
@@ -932,7 +932,7 @@ function makeAppIcon(app, monitorIndex, iconAnimator) {
  * - Add open windows thumbnails instead of list
  * - update menu when application windows change
  */
-const MyAppIconMenu = class DashToDock_MyAppIconMenu extends AppDisplay.AppIconMenu {
+const DockAppIconMenu = class DockAppIconMenu extends AppDisplay.AppIconMenu {
 
     constructor(source) {
         let side = Utils.getPosition();
@@ -1186,7 +1186,7 @@ const MyAppIconMenu = class DashToDock_MyAppIconMenu extends AppDisplay.AppIconM
             }
     }
 };
-Signals.addSignalMethods(MyAppIconMenu.prototype);
+Signals.addSignalMethods(DockAppIconMenu.prototype);
 
 // Filter out unnecessary windows, for instance
 // nautilus desktop window.
@@ -1216,13 +1216,13 @@ function getInterestingWindows(windows, monitorIndex) {
  *
  */
 
-var MyShowAppsIcon = GObject.registerClass({
+var DockShowAppsIcon = GObject.registerClass({
     Signals: {
         'menu-state-changed': { param_types: [GObject.TYPE_BOOLEAN] },
         'sync-tooltip': {}
     }
 }
-, class DashToDock_MyShowAppsIcon extends Dash.ShowAppsIcon {
+, class DockShowAppsIcon extends Dash.ShowAppsIcon {
     _init() {
         super._init();
 
@@ -1282,7 +1282,7 @@ var MyShowAppsIcon = GObject.registerClass({
         this.toggleButton.fake_release();
 
         if (!this._menu) {
-            this._menu = new MyShowAppsIconMenu(this);
+            this._menu = new DockShowAppsIconMenu(this);
             this._menu.connect('open-state-changed', (menu, isPoppedUp) => {
                 if (!isPoppedUp)
                     this._onMenuPoppedDown();
@@ -1311,7 +1311,7 @@ var MyShowAppsIcon = GObject.registerClass({
 /**
  * A menu for the showAppsIcon
  */
-var MyShowAppsIconMenu = class DashToDock_MyShowAppsIconMenu extends MyAppIconMenu {
+class DockShowAppsIconMenu extends DockAppIconMenu {
     _rebuildMenu() {
         this.removeAll();
 
