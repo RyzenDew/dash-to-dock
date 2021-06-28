@@ -29,6 +29,7 @@ const Workspace = imports.ui.workspace;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
 const Docking = Me.imports.docking;
+const FileManager1API = Me.imports.fileManager1API;
 const Locations = Me.imports.locations;
 const Utils = Me.imports.utils;
 const WindowPreview = Me.imports.windowPreview;
@@ -74,7 +75,8 @@ let recentlyClickedAppMonitor = -1;
  * - Update minimization animation target
  * - Update menu if open on windows change
  */
-var MyAppIcon = GObject.registerClass({
+var DockAbstractAppIcon = GObject.registerClass({
+    GTypeFlags: GObject.TypeFlags.ABSTRACT,
     Properties: {
         'focused': GObject.ParamSpec.boolean(
             'focused', 'focused', 'focused',
@@ -93,7 +95,7 @@ var MyAppIcon = GObject.registerClass({
             GObject.ParamFlags.READWRITE,
             0, GLib.MAXUINT32, 0),
     }
-}, class MyAppIcon extends Dash.DashIcon {
+}, class DockAbstractAppIcon extends Dash.DashIcon {
     // settings are required inside.
     _init(app, monitorIndex, iconAnimator) {
         super._init(app);
@@ -104,9 +106,6 @@ var MyAppIcon = GObject.registerClass({
         this.iconAnimator = iconAnimator;
         this._indicator = new AppIconIndicators.AppIconIndicator(this);
 
-        let appInfo = app.get_app_info();
-        this._location = appInfo ? appInfo.get_string('XdtdUri') : null;
-
         // Monitor windows-changes instead of app state.
         // Keep using the same Id and function callback (that is extended)
         if (this._stateChangedId > 0) {
@@ -114,9 +113,6 @@ var MyAppIcon = GObject.registerClass({
             this._stateChangedId = 0;
         }
 
-        this._signalsHandler.add(this.app, 'windows-changed', () => this.onWindowsChanged());
-        this._signalsHandler.add(this.app, 'notify::state', () => this._updateRunningState());
-        this._signalsHandler.add(tracker, 'notify::focus-app', () => this._updateFocusState());
         this._signalsHandler.add(global.display, 'window-demands-attention', (_dpy, window) =>
             this._onWindowDemandsAttention(window));
         this._signalsHandler.add(global.display, 'window-marked-urgent', (_dpy, window) =>
@@ -135,6 +131,20 @@ var MyAppIcon = GObject.registerClass({
                 'window-entered-monitor',
                 this._onWindowEntered.bind(this));
         }
+
+        this.connect('notify::running', () => {
+            if (this.running)
+                this.add_style_class_name('running');
+            else
+                this.remove_style_class_name('running');
+        });
+
+        this.connect('notify::focused', () => {
+            if (this.focused)
+                this.add_style_class_name('focused');
+            else
+                this.remove_style_class_name('focused');
+        })
 
         this.connect('notify::urgent', () => {
             const icon = this.icon._iconBin;
@@ -173,14 +183,6 @@ var MyAppIcon = GObject.registerClass({
             );
         });
 
-        if (this._location) {
-            this._signalsHandler.add(
-                Docking.DockManager.getDefault().fm1Client,
-                'windows-changed',
-                this.onWindowsChanged.bind(this)
-            );
-        }
-
         this._updateState();
         this._numberOverlay();
 
@@ -198,18 +200,13 @@ var MyAppIcon = GObject.registerClass({
             this._menu.close(false);
     }
 
-    get location() {
-        return this._location;
-    }
-
-    get isTrash() {
-        return this._location?.startsWith(Locations.TRASH_URI);
+    ownsWindow(window) {
+        return this.app === tracker.get_window_app(window);
     }
 
     _onWindowEntered(metaScreen, monitorIndex, metaWin) {
-        const app = tracker.get_window_app(metaWin);
-        if (app?.get_id() == this.app.get_id())
-            this.onWindowsChanged();
+        if (this.ownsWindow(metaWin))
+            this._updateWindows();
     }
 
     vfunc_scroll_event(scrollEvent) {
@@ -268,7 +265,7 @@ var MyAppIcon = GObject.registerClass({
         return Clutter.EVENT_STOP;
     }
 
-    onWindowsChanged() {
+    _updateWindows() {
         if (this._menu && this._menu.isOpen)
             this._menu.update();
 
@@ -286,23 +283,12 @@ var MyAppIcon = GObject.registerClass({
     }
 
     _updateRunningState() {
-        this.running = (this.app.state === Shell.AppState.RUNNING || this.isLocation()) &&
-            this.windowsCount;
-
-        if (this.running)
-            this.add_style_class_name('running');
-        else
-            this.remove_style_class_name('running');
+        this.running = !!this.windowsCount;
     }
 
     _updateFocusState() {
-        this.focused = (tracker.focus_app === this.app && this.running);
-
-        if (this.focused) {
-            this.add_style_class_name('focused');
-        } else {
-            this.remove_style_class_name('focused');
-        }
+        throw new GObject.NotImplementedError('_updateFocusState in %s'.format(
+            this.constructor.name));
     }
 
     _updateUrgentWindows(interestingWindows) {
@@ -318,7 +304,7 @@ var MyAppIcon = GObject.registerClass({
     }
 
     _onWindowDemandsAttention(window) {
-        if (tracker.get_window_app(window) === this.app)
+        if (this.ownsWindow(window))
             this._addUrgentWindow(window);
     }
 
@@ -852,26 +838,91 @@ var MyAppIcon = GObject.registerClass({
     }
 
     getWindows() {
-        return getWindows(this.app, this._location);
+        throw new GObject.NotImplementedError('getWindows in %s'.format(
+            this.constructor.name));
     }
 
     // Filter out unnecessary windows, for instance
     // nautilus desktop window.
     getInterestingWindows() {
-        const interestingWindows = getInterestingWindows(this.app,
-            this.monitorIndex, this._location);
+        const interestingWindows = getInterestingWindows(this.getWindows(),
+            this.monitorIndex);
 
         if (!this._urgentWindows.size)
             return interestingWindows;
 
         return [...new Set([...this._urgentWindows, ...interestingWindows])];
     }
+});
 
-    // Does the Icon represent a location rather than an App
-    isLocation() {
-        return this._location != null;
+var DockAppIcon = GObject.registerClass({
+}, class DockAppIcon extends DockAbstractAppIcon {
+    _init(app, monitorIndex, iconAnimator) {
+        super._init(app, monitorIndex, iconAnimator);
+
+        this._signalsHandler.add(this.app, 'windows-changed', () => this._updateWindows());
+        this._signalsHandler.add(this.app, 'notify::state', () => this._updateRunningState());
+        this._signalsHandler.add(tracker, 'notify::focus-app', () => this._updateFocusState());
+    }
+
+    _updateRunningState() {
+        this.running = (this.app.state === Shell.AppState.RUNNING) && this.windowsCount;
+    }
+
+    _updateFocusState() {
+        this.focused = (tracker.focus_app === this.app && this.running);
+    }
+
+    getWindows() {
+        return this.app.get_windows();
     }
 });
+
+var DockLocationAppIcon = GObject.registerClass({
+}, class DockLocationAppIcon extends DockAbstractAppIcon {
+    _init(app, location, monitorIndex, iconAnimator) {
+        if (!location)
+            throw new Error('Provided application %s has no location'.format(app));
+
+        this._location = location;
+        super._init(app, monitorIndex, iconAnimator);
+
+        this._signalsHandler.add(global.display, 'notify::focus-window',
+            () => this._updateFocusState());
+        this._signalsHandler.add(Docking.DockManager.getDefault().fm1Client,
+            'windows-changed', () => this._updateWindows());
+    }
+
+    get location() {
+        return this._location;
+    }
+
+    get isTrash() {
+        return this._location.startsWith(Locations.TRASH_URI);
+    }
+
+    _updateFocusState() {
+        this.focused = (this.getWindows().some(w => w.has_focus()) && this.running);
+    }
+
+    getWindows() {
+        return Docking.DockManager.getDefault().fm1Client.getWindows(this.location);
+    }
+
+    ownsWindow(window) {
+        return this.getWindows().includes(window);
+    }
+});
+
+function makeAppIcon(app, monitorIndex, iconAnimator) {
+    const location = app.appInfo?.get_string('XdtdUri');
+
+    if (location)
+        return new DockLocationAppIcon(app, location, monitorIndex, iconAnimator);
+
+    return new DockAppIcon(app, monitorIndex, iconAnimator);
+}
+
 /**
  * Extend AppIconMenu
  *
@@ -974,7 +1025,7 @@ const MyAppIconMenu = class DashToDock_MyAppIconMenu extends AppDisplay.AppIconM
                 }
 
                 let canFavorite = global.settings.is_writable('favorite-apps') &&
-                                  !this._source.isLocation();
+                                  (this._source instanceof DockAppIcon);
 
                 if (canFavorite) {
                     this._appendSeparator();
@@ -997,7 +1048,7 @@ const MyAppIconMenu = class DashToDock_MyAppIconMenu extends AppDisplay.AppIconM
                 }
 
                 if (Shell.AppSystem.get_default().lookup_app('org.gnome.Software.desktop') &&
-                    !this._source.isLocation()) {
+                    (this._source instanceof DockAppIcon)) {
                     this._appendSeparator();
                     let item = this._appendMenuItem(_('Show Details'));
                     item.connect('activate', () => {
@@ -1017,7 +1068,6 @@ const MyAppIconMenu = class DashToDock_MyAppIconMenu extends AppDisplay.AppIconM
                     });
                 }
             }
-
         } else {
             if (super._rebuildMenu)
                 super._rebuildMenu();
@@ -1138,21 +1188,9 @@ const MyAppIconMenu = class DashToDock_MyAppIconMenu extends AppDisplay.AppIconM
 };
 Signals.addSignalMethods(MyAppIconMenu.prototype);
 
-function getWindows(app, location) {
-    if (location != null && Docking.DockManager.getDefault().fm1Client) {
-        return Docking.DockManager.getDefault().fm1Client.getWindows(location);
-    } else {
-        return app.get_windows();
-    }
-}
-
 // Filter out unnecessary windows, for instance
 // nautilus desktop window.
-function getInterestingWindows(app, monitorIndex, location) {
-    let windows = getWindows(app, location).filter(function(w) {
-        return !w.skip_taskbar;
-    });
-
+function getInterestingWindows(windows, monitorIndex) {
     let settings = Docking.DockManager.settings;
 
     // When using workspace isolation, we filter out windows
