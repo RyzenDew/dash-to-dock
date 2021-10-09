@@ -124,7 +124,6 @@ var DockDash = GObject.registerClass({
             vertical: !this._isHorizontal,
             y_expand: this._isHorizontal,
             x_expand: !this._isHorizontal,
-            pack_start: Docking.DockManager.settings.get_boolean('show-apps-at-top')
         });
 
         this._scrollView = new St.ScrollView({
@@ -172,7 +171,9 @@ var DockDash = GObject.registerClass({
             this._itemMenuStateChanged(this._showAppsIcon, opened);
         });
 
-        this._dashContainer.add_child(this._showAppsIcon);
+        this._dashContainer.insert_child_at_index(this._showAppsIcon,
+            Docking.DockManager.settings.get_boolean('show-apps-at-top') ?
+            0 : -1);
 
         this._background = new St.Widget({
             style_class: 'dash-background',
@@ -1028,9 +1029,9 @@ var DockDash = GObject.registerClass({
 
     updateShowAppsButton() {
         if (Docking.DockManager.settings.get_boolean('show-apps-at-top')) {
-            this._dashContainer.pack_start = true;
+            this._dashContainer.set_child_at_index(this._showAppsIcon, 0);
         } else {
-            this._dashContainer.pack_start = false;
+            this._dashContainer.set_child_at_index(this._showAppsIcon, -1);
         }
     }
 });
