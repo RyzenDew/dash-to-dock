@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Install dependencies.
-        run: sudo apt-get install -y --install-recommends sassc gettext eslint
+        run: sudo apt-get install -y --install-recommends sassc gettext eslint node-optionator
 
       - name: Make
         run: make
