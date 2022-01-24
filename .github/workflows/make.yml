@@ -26,7 +26,7 @@ jobs:
         run: sudo npm install eslint -g
 
       - name: Make Check
-        run: make check ESLINT_TAP=yes
+        run: make check
 
       - name: Make Install
         run: make install
