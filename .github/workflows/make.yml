@@ -11,16 +11,19 @@ name: Make
 jobs:
   make:
     name: Make
-    runs-on: ubuntu-rolling
+    runs-on: ubuntu-latest
     steps:
       - name: Check out the codebase.
         uses: actions/checkout@v2
 
       - name: Install dependencies.
-        run: sudo apt-get install -y sassc gettext eslint
+        run: sudo apt-get install -y sassc gettext
 
       - name: Make
         run: make
+
+      - name: Install modules
+        run: sudo npm install eslint -g
 
       - name: Make Check
         run: make check ESLINT_TAP=yes
