@@ -1,5 +1,13 @@
+
+const Gi = imports._gi;
+
 const Clutter = imports.gi.Clutter;
+const GLib = imports.gi.GLib;
+const Gio = imports.gi.Gio;
+const GObject = imports.gi.GObject;
+const Gtk = imports.gi.Gtk;
 const Meta = imports.gi.Meta;
+const Shell = imports.gi.Shell;
 const St = imports.gi.St;
 
 const Me = imports.misc.extensionUtils.getCurrentExtension();
@@ -16,30 +24,58 @@ var SignalsHandlerFlags = {
  */
 const BasicHandler = class DashToDock_BasicHandler {
 
-    constructor() {
+    constructor(parentObject) {
         this._storage = new Object();
+
+        if (parentObject) {
+            if (!(parentObject.connect instanceof Function))
+                throw new TypeError('Not a valid parent object');
+
+            if (!(parentObject instanceof GObject.Object) ||
+                GObject.signal_lookup('destroy', parentObject.constructor.$gtype)) {
+                this._parentObject = parentObject;
+                this._destroyId = parentObject.connect('destroy', () => this.destroy());
+            }
+        }
     }
 
-    add(/* unlimited 3-long array arguments */) {
+    add(...args) {
         // Convert arguments object to array, concatenate with generic
         // Call addWithLabel with ags as if they were passed arguments
-        this.addWithLabel('generic', ...arguments);
+        this.addWithLabel('generic', ...args);
     }
 
     destroy() {
+        this._parentObject?.disconnect(this._destroyId);
+        this._parentObject = null;
+
         for( let label in this._storage )
             this.removeWithLabel(label);
     }
 
-    addWithLabel(label /* plus unlimited 3-long array arguments*/) {
+    block() {
+        Object.keys(this._storage).forEach(label => this.blockWithLabel(label));
+    }
+
+    unblock() {
+        Object.keys(this._storage).forEach(label => this.unblockWithLabel(label));
+    }
+
+    addWithLabel(label, ...args) {
+        let argsArray = [...args];
+        if (argsArray.every(arg => !Array.isArray(arg)))
+            argsArray = [argsArray];
+
         if (this._storage[label] == undefined)
             this._storage[label] = new Array();
 
         // Skip first element of the arguments
-        for (let i = 1; i < arguments.length; i++) {
+        for (const argArray of argsArray) {
+            if (argArray.length < 3)
+                throw new Error('Unexpected number of arguments');
             let item = this._storage[label];
             try {
-                item.push(this._create(arguments[i]));
+                item.push(this._create(...argArray));
             } catch (e) {
                 logError(e);
             }
@@ -55,20 +91,42 @@ const BasicHandler = class DashToDock_BasicHandler {
         }
     }
 
+    blockWithLabel(label) {
+        (this._storage[label] || []).forEach(item => this._block(item));
+    }
+
+    unblockWithLabel(label) {
+        (this._storage[label] || []).forEach(item => this._unblock(item));
+    }
+
     // Virtual methods to be implemented by subclass
 
     /**
      * Create single element to be stored in the storage structure
      */
-    _create(item) {
+    _create(_object, _element, _callback) {
         throw new GObject.NotImplementedError(`_create in ${this.constructor.name}`);
     }
 
     /**
      * Correctly delete single element
      */
-    _remove(item) {
+    _remove(_item) {
         throw new GObject.NotImplementedError(`_remove in ${this.constructor.name}`);
+    }
+
+    /**
+     * Block single element
+     */
+    _block(_item) {
+        throw new GObject.NotImplementedError(`_block in ${this.constructor.name}`);
+    }
+
+    /**
+     * Unblock single element
+     */
+    _unblock(_item) {
+        throw new GObject.NotImplementedError(`_unblock in ${this.constructor.name}`);
     }
 };
 
@@ -77,12 +135,7 @@ const BasicHandler = class DashToDock_BasicHandler {
  */
 var GlobalSignalsHandler = class DashToDock_GlobalSignalHandler extends BasicHandler {
 
-    _create(item) {
-        let object = item[0];
-        let event = item[1];
-        let callback = item[2]
-        let flags = item.length > 3 ? item[3] : SignalsHandlerFlags.NONE;
-
+    _create(object, event, callback, flags = SignalsHandlerFlags.NONE) {
         if (!object)
             throw new Error('Impossible to connect to an invalid object');
 
@@ -101,7 +154,22 @@ var GlobalSignalsHandler = class DashToDock_GlobalSignalHandler extends BasicHan
     }
 
     _remove(item) {
-         item[0].disconnect(item[1]);
+        const [object, id] = item;
+        object.disconnect(id);
+    }
+
+    _block(item) {
+        const [object, id] = item;
+
+        if (object instanceof GObject.Object)
+            GObject.Object.prototype.block_signal_handler.call(object, id);
+    }
+
+    _unblock(item) {
+        const [object, id] = item;
+
+        if (object instanceof GObject.Object)
+            GObject.Object.prototype.unblock_signal_handler.call(object, id);
     }
 };
 
@@ -217,21 +285,91 @@ var ColorUtils = class DashToDock_ColorUtils {
  */
 var InjectionsHandler = class DashToDock_InjectionsHandler extends BasicHandler {
 
-    _create(item) {
-        let object = item[0];
-        let name = item[1];
-        let injectedFunction = item[2];
+    _create(object, name, injectedFunction) {
         let original = object[name];
 
-        object[name] = injectedFunction;
-        return [object, name, injectedFunction, original];
+        if (!(original instanceof Function))
+            throw new Error(`Virtual function ${name}() is not available for ${object}`);
+
+        object[name] = function(...args) { return injectedFunction.call(this, original, ...args) };
+        return [object, name, original];
     }
 
     _remove(item) {
-        let object = item[0];
-        let name = item[1];
-        let original = item[3];
+        const [object, name, original] = item;
         object[name] = original;
+    }
+};
+
+/**
+ * Manage vfunction injection: both instances and prototype can be overridden
+ * and restored
+ */
+var VFuncInjectionsHandler = class DashToDock_VFuncInjectionsHandler extends BasicHandler {
+
+    _create(prototype, name, injectedFunction) {
+        const original = prototype[`vfunc_${name}`];
+        if (!(original instanceof Function))
+            throw new Error(`Virtual function ${name} is not available for ${prototype}`);
+        this._replaceVFunc(prototype, name, injectedFunction);
+        return [prototype, name];
+    }
+
+    _remove(item) {
+        const [prototype, name] = item;
+        const originalVFunc = prototype[`vfunc_${name}`];
+        try {
+            // This may fail if trying to reset to a never-overridden vfunc
+            // as gjs doesn't consider it a function, even if it's true that
+            // originalVFunc instanceof Function.
+            this._replaceVFunc(prototype, name, originalVFunc);
+        } catch {
+            try {
+                this._replaceVFunc(prototype, name, function (...args) {
+                    return originalVFunc.call(this, ...args);
+                });
+            } catch (e) {
+                logError(e, `Removing vfunc_${name}`);
+            }
+        }
+    }
+
+    _replaceVFunc(prototype, name, func) {
+        if (Gi.gobject_prototype_symbol && Gi.gobject_prototype_symbol in prototype)
+            prototype = prototype[Gi.gobject_prototype_symbol];
+
+        return prototype[Gi.hook_up_vfunc_symbol](name, func);
+    }
+};
+
+/**
+ * Manage properties injection: both instances and prototype can be overridden
+ * and restored
+ */
+var PropertyInjectionsHandler = class DashToDock_PropertyInjectionsHandler extends BasicHandler {
+
+    _create(instance, name, injectedPropertyDescriptor) {
+        if (!(name in instance))
+            throw new Error(`Object ${instance} has no '${name}' property`);
+
+        const prototype = instance.constructor.prototype;
+        const originalPropertyDescriptor = Object.getOwnPropertyDescriptor(prototype, name) ??
+            Object.getOwnPropertyDescriptor(instance, name);
+
+        Object.defineProperty(instance, name, {
+            ...originalPropertyDescriptor,
+            ...injectedPropertyDescriptor,
+            ...{ configurable: true },
+        });
+        return [instance, name, originalPropertyDescriptor];
+    }
+
+    _remove(item) {
+        const [instance, name, originalPropertyDescriptor] = item;
+        if (originalPropertyDescriptor)
+            Object.defineProperty(instance, name, originalPropertyDescriptor);
+        else
+            delete instance[name];
     }
 };
 
@@ -247,6 +385,10 @@ function getPosition() {
             position = St.Side.LEFT;
     }
     return position;
+}
+
+function getPreviewScale() {
+    return Docking.DockManager.settings.get_double('preview-size-scale');
 }
 
 function drawRoundedLine(cr, x, y, width, height, isRoundLeft, isRoundRight, stroke, fill) {
@@ -281,3 +423,178 @@ function drawRoundedLine(cr, x, y, width, height, isRoundLeft, isRoundRight, str
         cr.setSource(stroke);
     cr.stroke();
 }
+
+/**
+ * Convert a signal handler with n value parameters (that is, excluding the
+ * signal source parameter) to an array of n handlers that are each responsible
+ * for receiving one of the n values and calling the original handler with the
+ * most up-to-date arguments.
+ */
+function splitHandler(handler) {
+    if (handler.length > 30) {
+        throw new Error("too many parameters");
+    }
+    const count = handler.length - 1;
+    let missingValueBits = (1 << count) - 1;
+    const values = Array.from({ length: count });
+    return values.map((_ignored, i) => {
+        const mask = ~(1 << i);
+        return (obj, value) => {
+            values[i] = value;
+            missingValueBits &= mask;
+            if (missingValueBits === 0) {
+                handler(obj, ...values);
+            }
+        };
+    });
+}
+
+var IconTheme = class DashToDockIconTheme {
+    constructor() {
+        const settings = St.Settings.get();
+        this._iconTheme = new Gtk.IconTheme();
+        this._iconTheme.set_custom_theme(settings.gtkIconTheme);
+        this._changesId = settings.connect('notify::gtk-icon-theme', () => {
+            this._iconTheme.set_custom_theme(settings.gtkIconTheme);
+        });
+    }
+
+    get iconTheme() {
+        return this._iconTheme;
+    }
+
+    destroy() {
+        St.Settings.get().disconnect(this._changesId);
+        this._iconTheme = null;
+    }
+}
+
+/**
+ * Construct a map of gtk application window object paths to MetaWindows.
+ */
+function getWindowsByObjectPath() {
+    const windowsByObjectPath = new Map();
+    const { workspaceManager } = global;
+    const workspaces = [...new Array(workspaceManager.nWorkspaces)].map(
+        (_c, i) => workspaceManager.get_workspace_by_index(i));
+
+    workspaces.forEach(ws => {
+        ws.list_windows().forEach(w => {
+            const path = w.get_gtk_window_object_path();
+            if (path != null)
+                windowsByObjectPath.set(path, w);
+        });
+    });
+
+    return windowsByObjectPath;
+}
+
+// Re-implements shell_app_compare so that can be used to resort running apps
+function shellAppCompare(appA, appB) {
+    if (appA.state !== appB.state) {
+        if (appA.state === Shell.AppState.RUNNING)
+            return -1;
+        return 1;
+    }
+
+    const windowsA = appA.get_windows();
+    const windowsB = appB.get_windows();
+
+    const isMinimized = windows => !windows.some(w => w.showing_on_its_workspace());
+    const minimizedB = isMinimized(windowsB);
+    if (isMinimized(windowsA) != minimizedB) {
+        if (minimizedB)
+            return -1;
+        return 1;
+    }
+
+    if (appA.state === Shell.AppState.RUNNING) {
+        if (windowsA.length && !windowsB.length)
+            return -1;
+        else if (!windowsA.length && windowsB.length)
+            return 1;
+
+        const lastUserTime = windows =>
+            Math.max(...windows.map(w => w.get_user_time()));
+        return lastUserTime(windowsB) - lastUserTime(windowsA);
+    }
+
+    return 0;
+}
+
+// Re-implements shell_app_compare_windows
+function shellWindowsCompare(winA, winB) {
+    const activeWorkspace = global.workspaceManager.get_active_workspace();
+    const wsA = winA.get_workspace() === activeWorkspace;
+    const wsB = winB.get_workspace() === activeWorkspace;
+
+    if (wsA && !wsB)
+        return -1;
+    else if (!wsA && wsB)
+        return 1;
+
+    const visA = winA.showing_on_its_workspace();
+    const visB = winB.showing_on_its_workspace();
+
+    if (visA && !visB)
+        return -1;
+    else if (!visA && visB)
+        return 1;
+
+    return winB.get_user_time() - winA.get_user_time();
+}
+
+var CancellableChild = GObject.registerClass({
+    Properties: {
+        'parent': GObject.ParamSpec.object(
+            'parent', 'parent', 'parent',
+            GObject.ParamFlags.READWRITE | GObject.ParamFlags.CONSTRUCT_ONLY,
+            Gio.Cancellable.$gtype),
+    },
+},
+class CancellableChild extends Gio.Cancellable {
+    _init(parent) {
+        if (parent && !(parent instanceof Gio.Cancellable))
+            throw TypeError('Not a valid cancellable');
+
+        super._init({ parent });
+
+        if (parent?.is_cancelled()) {
+            this.cancel();
+            return;
+        }
+
+        this._connectToParent();
+    }
+
+    _connectToParent() {
+        this._connectId = this?.parent.connect(() => {
+            this._realCancel();
+
+            if (this._disconnectIdle)
+                return;
+
+            this._disconnectIdle = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                delete this._disconnectIdle;
+                this._disconnectFromParent();
+                return GLib.SOURCE_REMOVE;
+            });
+        });
+    }
+
+    _disconnectFromParent() {
+        if (this._connectId && !this._disconnectIdle) {
+            this.parent.disconnect(this._connectId);
+            delete this._connectId;
+        }
+    }
+
+    _realCancel() {
+        Gio.Cancellable.prototype.cancel.call(this);
+    }
+
+    cancel() {
+        this._disconnectFromParent();
+        this._realCancel();
+    }
+});
