@@ -1,21 +1,26 @@
 // -*- mode: js; js-indent-level: 4; indent-tabs-mode: nil -*-
 
-const Gio = imports.gi.Gio;
-const Signals = imports.signals;
+import {Gio} from './dependencies/gi.js';
+import {DBusMenuUtils} from './imports.js';
 
-var LauncherEntryRemoteModel = class DashToDock_LauncherEntryRemoteModel {
+const DBusMenu = await DBusMenuUtils.haveDBusMenu();
 
+print('DBusMenu is', DBusMenu);
+
+export class LauncherEntryRemoteModel {
     constructor() {
-        this._entriesByDBusName = {};
+        this._entrySourceStacks = new Map();
+        this._remoteMaps = new Map();
 
         this._launcher_entry_dbus_signal_id =
             Gio.DBus.session.signal_subscribe(null, // sender
                 'com.canonical.Unity.LauncherEntry', // iface
-                null, // member
+                'Update', // member
                 null, // path
                 null, // arg0
                 Gio.DBusSignalFlags.NONE,
-                this._onEntrySignalReceived.bind(this));
+                (_connection, senderName, _objectPath, _interfaceName, _signalName, parameters) =>
+                    this._onUpdate(senderName, ...parameters.deep_unpack()));
 
         this._dbus_name_owner_changed_signal_id =
             Gio.DBus.session.signal_subscribe('org.freedesktop.DBus',  // sender
@@ -24,63 +29,44 @@ var LauncherEntryRemoteModel = class DashToDock_LauncherEntryRemoteModel {
                 '/org/freedesktop/DBus', // path
                 null,                    // arg0
                 Gio.DBusSignalFlags.NONE,
-                this._onDBusNameOwnerChanged.bind(this));
+                (connection, _senderName, _objectPath, _interfaceName, _signalName, parameters) =>
+                    this._onDBusNameChange(...parameters.deep_unpack().slice(1)));
 
         this._acquireUnityDBus();
     }
 
     destroy() {
-        if (this._launcher_entry_dbus_signal_id) {
+        if (this._launcher_entry_dbus_signal_id)
             Gio.DBus.session.signal_unsubscribe(this._launcher_entry_dbus_signal_id);
-        }
 
-        if (this._dbus_name_owner_changed_signal_id) {
+
+        if (this._dbus_name_owner_changed_signal_id)
             Gio.DBus.session.signal_unsubscribe(this._dbus_name_owner_changed_signal_id);
-        }
+
 
         this._releaseUnityDBus();
     }
 
-    size() {
-        return Object.keys(this._entriesByDBusName).length;
-    }
+    _lookupStackById(appId) {
+        let sourceStack = this._entrySourceStacks.get(appId);
+        if (!sourceStack) {
+            sourceStack = new PropertySourceStack(new LauncherEntry(),
+                launcherEntryDefaults);
+            this._entrySourceStacks.set(appId, sourceStack);
+        }
 
-    lookupByDBusName(dbusName) {
-        return this._entriesByDBusName.hasOwnProperty(dbusName) ? this._entriesByDBusName[dbusName] : null;
+        return sourceStack;
     }
 
     lookupById(appId) {
-        let ret = [];
-        for (let dbusName in this._entriesByDBusName) {
-            let entry = this._entriesByDBusName[dbusName];
-            if (entry && entry.appId() == appId) {
-                ret.push(entry);
-            }
-        }
-
-        return ret;
-    }
-
-    addEntry(entry) {
-        let existingEntry = this.lookupByDBusName(entry.dbusName());
-        if (existingEntry) {
-            existingEntry.update(entry);
-        } else {
-            this._entriesByDBusName[entry.dbusName()] = entry;
-            this.emit('entry-added', entry);
-        }
-    }
-
-    removeEntry(entry) {
-        delete this._entriesByDBusName[entry.dbusName()]
-        this.emit('entry-removed', entry);
+        return this._lookupStackById(appId).target;
     }
 
     _acquireUnityDBus() {
         if (!this._unity_bus_id) {
             this._unity_bus_id = Gio.DBus.session.own_name('com.canonical.Unity',
                 Gio.BusNameOwnerFlags.ALLOW_REPLACEMENT | Gio.BusNameOwnerFlags.REPLACE,
-                null, () => this._unity_bus_id = 0);
+                null, () => (this._unity_bus_id = 0));
         }
     }
 
@@ -91,150 +77,212 @@ var LauncherEntryRemoteModel = class DashToDock_LauncherEntryRemoteModel {
         }
     }
 
-    _onEntrySignalReceived(connection, sender_name, object_path,
-        interface_name, signal_name, parameters, user_data) {
-        if (!parameters || !signal_name)
+    _onDBusNameChange(before, after) {
+        if (!before || !this._remoteMaps.size)
             return;
 
-        if (signal_name == 'Update') {
-            if (!sender_name) {
-                return;
-            }
-
-            this._handleUpdateRequest(sender_name, parameters);
-        }
-    }
-
-    _onDBusNameOwnerChanged(connection, sender_name, object_path,
-        interface_name, signal_name, parameters, user_data) {
-        if (!parameters || !this.size())
+        const remoteMap = this._remoteMaps.get(before);
+        if (!remoteMap)
             return;
 
-        let [name, before, after] = parameters.deep_unpack();
-
-        if (!after) {
-            if (this._entriesByDBusName.hasOwnProperty(before)) {
-                this.removeEntry(this._entriesByDBusName[before]);
+        this._remoteMaps.delete(before);
+        if (after && !this._remoteMaps.has(after)) {
+            this._remoteMaps.set(after, remoteMap);
+        } else {
+            for (const [appId, remote] of remoteMap) {
+                const sourceStack = this._entrySourceStacks.get(appId);
+                const changed = sourceStack.remove(remote);
+                if (changed)
+                    sourceStack.target._emitChangedEvents(changed);
             }
         }
     }
 
-    _handleUpdateRequest(senderName, parameters) {
-        if (!senderName || !parameters) {
+    _onUpdate(senderName, appUri, properties) {
+        if (!senderName)
             return;
-        }
 
-        let [appUri, properties] = parameters.deep_unpack();
-        let appId = appUri.replace(/(^\w+:|^)\/\//, '');
-        let entry = this.lookupByDBusName(senderName);
 
-        if (entry) {
-            entry.setDBusName(senderName);
-            entry.update(properties);
-        } else {
-            let entry = new LauncherEntryRemote(senderName, appId, properties);
-            this.addEntry(entry);
-        }
-    }
-};
-Signals.addSignalMethods(LauncherEntryRemoteModel.prototype);
+        const appId = appUri.replace(/(^\w+:|^)\/\//, '');
+        if (!appId)
+            return;
 
-var LauncherEntryRemote = class DashToDock_LauncherEntryRemote {
 
-    constructor(dbusName, appId, properties) {
-        this._dbusName = dbusName;
-        this._appId = appId;
-        this._count = 0;
-        this._countVisible = false;
-        this._progress = 0.0;
-        this._progressVisible = false;
-        this.update(properties);
-    }
+        let remoteMap = this._remoteMaps.get(senderName);
+        if (!remoteMap)
+            this._remoteMaps.set(senderName, remoteMap = new Map());
 
-    appId() {
-        return this._appId;
-    }
+        let remote = remoteMap.get(appId);
+        if (!remote)
+            remoteMap.set(appId, remote = Object.assign({}, launcherEntryDefaults));
 
-    dbusName() {
-        return this._dbusName;
-    }
-
-    count() {
-        return this._count;
-    }
-
-    setCount(count) {
-        if (this._count != count) {
-            this._count = count;
-            this.emit('count-changed', this._count);
-        }
-    }
-
-    countVisible() {
-        return this._countVisible;
-    }
-
-    setCountVisible(countVisible) {
-        if (this._countVisible != countVisible) {
-            this._countVisible = countVisible;
-            this.emit('count-visible-changed', this._countVisible);
-        }
-    }
-
-    progress() {
-        return this._progress;
-    }
-
-    setProgress(progress) {
-        if (this._progress != progress) {
-            this._progress = progress;
-            this.emit('progress-changed', this._progress);
-        }
-    }
-
-    progressVisible() {
-        return this._progressVisible;
-    }
-
-    setProgressVisible(progressVisible) {
-        if (this._progressVisible != progressVisible) {
-            this._progressVisible = progressVisible;
-            this.emit('progress-visible-changed', this._progressVisible);
-        }
-    }
-
-    setDBusName(dbusName) {
-        if (this._dbusName != dbusName) {
-            let oldName = this._dbusName;
-            this._dbusName = dbusName;
-            this.emit('dbus-name-changed', oldName);
-        }
-    }
-
-    update(other) {
-        if (other instanceof LauncherEntryRemote) {
-            this.setDBusName(other.dbusName())
-            this.setCount(other.count());
-            this.setCountVisible(other.countVisible());
-            this.setProgress(other.progress());
-            this.setProgressVisible(other.progressVisible())
-        } else {
-            for (let property in other) {
-                if (other.hasOwnProperty(property)) {
-                    if (property == 'count') {
-                        this.setCount(other[property].get_int64());
-                    } else if (property == 'count-visible') {
-                        this.setCountVisible(other[property].get_boolean());
-                    } if (property == 'progress') {
-                        this.setProgress(other[property].get_double());
-                    } else if (property == 'progress-visible') {
-                        this.setProgressVisible(other[property].get_boolean());
+        for (const name in properties) {
+            if (name === 'quicklist' && DBusMenu) {
+                const quicklistPath = properties[name].unpack();
+                if (quicklistPath &&
+                    (!remote._quicklistMenuClient ||
+                     remote._quicklistMenuClient.dbus_object !== quicklistPath)) {
+                    remote.quicklist = null;
+                    let menuClient = remote._quicklistMenuClient;
+                    if (menuClient) {
+                        menuClient.dbus_object = quicklistPath;
                     } else {
-                        // Not implemented yet
+                        // This property should not be enumerable
+                        Object.defineProperty(remote, '_quicklistMenuClient', {
+                            writable: true,
+                            value: menuClient = new DBusMenu.Client({
+                                dbus_name: senderName,
+                                dbus_object: quicklistPath,
+                            }),
+                        });
+                    }
+                    const handler = () => {
+                        const root = menuClient.get_root();
+                        if (remote.quicklist !== root) {
+                            remote.quicklist = root;
+                            if (sourceStack.isTop(remote)) {
+                                sourceStack.target.quicklist = root;
+                                sourceStack.target._emitChangedEvents(['quicklist']);
+                            }
+                        }
+                    };
+                    menuClient.connect(DBusMenu.CLIENT_SIGNAL_ROOT_CHANGED, handler);
+                }
+            } else {
+                remote[name] = properties[name].unpack();
+            }
+        }
+
+        const sourceStack = this._lookupStackById(appId);
+        sourceStack.target._emitChangedEvents(sourceStack.update(remote));
+    }
+}
+
+const launcherEntryDefaults = Object.freeze({
+    count: 0,
+    progress: 0,
+    urgent: false,
+    quicklist: null,
+    'count-visible': false,
+    'progress-visible': false,
+});
+
+const LauncherEntry = class DashToDockLauncherEntry {
+    constructor() {
+        this._connections = new Map();
+        this._handlers = new Map();
+        this._nextId = 0;
+    }
+
+    connect(eventNames, callback) {
+        if (typeof eventNames === 'string')
+            eventNames = [eventNames];
+
+        callback(this, this);
+        const id = this._nextId++;
+        const handler = {id, callback};
+        eventNames.forEach(name => {
+            let handlerList = this._handlers.get(name);
+            if (!handlerList)
+                this._handlers.set(name, handlerList = []);
+
+            handlerList.push(handler);
+        });
+        this._connections.set(id, eventNames);
+        return id;
+    }
+
+    disconnect(id) {
+        const eventNames = this._connections.get(id);
+        if (!eventNames)
+            return;
+
+        this._connections.delete(id);
+        eventNames.forEach(name => {
+            const handlerList = this._handlers.get(name);
+            if (handlerList) {
+                for (let i = 0, iMax = handlerList.length; i < iMax; i++) {
+                    if (handlerList[i].id === id) {
+                        handlerList.splice(i, 1);
+                        break;
                     }
                 }
             }
-        }
+        });
+    }
+
+    _emitChangedEvents(propertyNames) {
+        const handlers = new Set();
+        propertyNames.forEach(name => {
+            const handlerList = this._handlers.get(`${name}-changed`);
+            if (handlerList) {
+                for (let i = 0, iMax = handlerList.length; i < iMax; i++)
+                    handlers.add(handlerList[i]);
+            }
+        });
+        Array.from(handlers).sort((x, y) => x.id - y.id).forEach(handler => handler.callback(this, this));
     }
 };
-Signals.addSignalMethods(LauncherEntryRemote.prototype);
+
+for (const [name, defaultValue] of Object.entries(launcherEntryDefaults)) {
+    const jsName = name.replace(/-/g, '_');
+    LauncherEntry.prototype[jsName] = defaultValue;
+    if (jsName !== name) {
+        Object.defineProperty(LauncherEntry.prototype, name, {
+            get() {
+                return this[jsName];
+            },
+            set(value) {
+                this[jsName] = value;
+            },
+        });
+    }
+}
+
+const PropertySourceStack = class DashToDockPropertySourceStack {
+    constructor(target, bottom) {
+        this.target = target;
+        this._bottom = bottom;
+        this._stack = [];
+    }
+
+    isTop(source) {
+        return this._stack.length > 0 && this._stack[this._stack.length - 1] === source;
+    }
+
+    update(source) {
+        if (!this.isTop(source)) {
+            this.remove(source);
+            this._stack.push(source);
+        }
+        return this._assignFrom(source);
+    }
+
+    remove(source) {
+        const stack = this._stack;
+        const top = stack[stack.length - 1];
+        if (top === source) {
+            stack.length--;
+            return this._assignFrom(stack.length > 0 ? stack[stack.length - 1] : this._bottom);
+        }
+        for (let i = 0, iMax = stack.length; i < iMax; i++) {
+            if (stack[i] === source) {
+                stack.splice(i, 1);
+                break;
+            }
+        }
+
+        return null;
+    }
+
+    _assignFrom(source) {
+        const changedProperties = [];
+        for (const name in source) {
+            if (this.target[name] !== source[name]) {
+                this.target[name] = source[name];
+                changedProperties.push(name);
+            }
+        }
+        return changedProperties;
+    }
+};
